@@ -541,6 +541,9 @@ def write_xlsx(all_store_rows, now):
     Formatting: bold frozen header, red rows for never-sold, yellow shared-inventory cell.
     Returns the file path.
     """
+    if not all_store_rows:
+        return None
+
     wb = Workbook()
     wb.remove(wb.active)  # remove default blank sheet
 

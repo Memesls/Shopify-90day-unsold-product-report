@@ -357,7 +357,7 @@ class TestWriteXlsx:
         return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
 
     def _row(self, last_sold="2025-01-01", shared="—"):
-        r = {fn: f"val" for fn in rpt.FIELDNAMES}
+        r = {fn: "val" for fn in rpt.FIELDNAMES}
         r["Last Sold Date"] = last_sold
         r["Shared Inventory"] = shared
         return r
@@ -395,3 +395,8 @@ class TestWriteXlsx:
         ws = load_workbook(path)["CBSD"]
         shared_col = rpt.FIELDNAMES.index("Shared Inventory") + 1
         assert ws.cell(2, shared_col).fill.fgColor.rgb.endswith("FFF2CC")
+
+    def test_returns_none_for_empty_store_rows(self, tmp_path):
+        with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
+            path = rpt.write_xlsx({}, self._now())
+        assert path is None
