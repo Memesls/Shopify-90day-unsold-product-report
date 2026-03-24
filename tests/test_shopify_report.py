@@ -350,3 +350,48 @@ class TestBuildReportRows:
         v2 = self._variant(variant_id=2, product_created_at=now - timedelta(days=100))
         rows = rpt.build_report_rows(self._store([v1, v2]), {}, now)
         assert rows[0]["Days Since Last Sale"] > rows[1]["Days Since Last Sale"]
+
+
+class TestWriteXlsx:
+    def _now(self):
+        return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def _row(self, last_sold="2025-01-01", shared="—"):
+        r = {fn: f"val" for fn in rpt.FIELDNAMES}
+        r["Last Sold Date"] = last_sold
+        r["Shared Inventory"] = shared
+        return r
+
+    def test_creates_xlsx_file(self, tmp_path):
+        with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
+            path = rpt.write_xlsx({"CBSD": [self._row()]}, self._now())
+        assert os.path.exists(path)
+        assert path.endswith(".xlsx")
+
+    def test_has_one_sheet_per_store(self, tmp_path):
+        from openpyxl import load_workbook
+        with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
+            path = rpt.write_xlsx({"CBSD": [self._row()], "LOSAD": [self._row()]}, self._now())
+        assert set(load_workbook(path).sheetnames) == {"CBSD", "LOSAD"}
+
+    def test_header_matches_fieldnames(self, tmp_path):
+        from openpyxl import load_workbook
+        with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
+            path = rpt.write_xlsx({"CBSD": [self._row()]}, self._now())
+        ws = load_workbook(path)["CBSD"]
+        assert [ws.cell(1, c).value for c in range(1, len(rpt.FIELDNAMES) + 1)] == rpt.FIELDNAMES
+
+    def test_never_sold_row_has_red_fill(self, tmp_path):
+        from openpyxl import load_workbook
+        with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
+            path = rpt.write_xlsx({"CBSD": [self._row(last_sold="Never Sold")]}, self._now())
+        ws = load_workbook(path)["CBSD"]
+        assert ws.cell(2, 1).fill.fgColor.rgb.endswith("FFD0D0")
+
+    def test_shared_inventory_cell_has_yellow_fill(self, tmp_path):
+        from openpyxl import load_workbook
+        with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
+            path = rpt.write_xlsx({"CBSD": [self._row(shared="Shared with: LOSAD")]}, self._now())
+        ws = load_workbook(path)["CBSD"]
+        shared_col = rpt.FIELDNAMES.index("Shared Inventory") + 1
+        assert ws.cell(2, shared_col).fill.fgColor.rgb.endswith("FFF2CC")

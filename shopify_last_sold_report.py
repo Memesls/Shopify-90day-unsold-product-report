@@ -533,6 +533,54 @@ def build_report_rows(store_data, shared_sku_map, now):
     return rows
 
 
+# ─── OUTPUT WRITERS ───────────────────────────────────────────────────────────
+
+def write_xlsx(all_store_rows, now):
+    """
+    Write a single .xlsx workbook with one sheet per store.
+    Formatting: bold frozen header, red rows for never-sold, yellow shared-inventory cell.
+    Returns the file path.
+    """
+    wb = Workbook()
+    wb.remove(wb.active)  # remove default blank sheet
+
+    RED_FILL    = PatternFill("solid", fgColor="FFD0D0")
+    YELLOW_FILL = PatternFill("solid", fgColor="FFF2CC")
+    BOLD        = Font(bold=True)
+    shared_col  = FIELDNAMES.index("Shared Inventory") + 1  # 1-based
+
+    for store_name, rows in all_store_rows.items():
+        ws = wb.create_sheet(title=store_name)
+
+        ws.append(FIELDNAMES)
+        for cell in ws[1]:
+            cell.font = BOLD
+        ws.freeze_panes = "A2"
+
+        for row in rows:
+            ws.append([row[fn] for fn in FIELDNAMES])
+            row_idx = ws.max_row
+
+            if row.get("Last Sold Date") == "Never Sold":
+                for cell in ws[row_idx]:
+                    cell.fill = RED_FILL
+
+            if str(row.get("Shared Inventory", "")).startswith("Shared with:"):
+                ws.cell(row=row_idx, column=shared_col).fill = YELLOW_FILL
+
+        for col_idx, col_cells in enumerate(ws.columns, 1):
+            max_len = max(
+                len(str(cell.value)) if cell.value is not None else 0
+                for cell in col_cells
+            )
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len * 1.2, 60)
+
+    os.makedirs(OUTPUT_XLSX_DIR, exist_ok=True)
+    filename = os.path.join(OUTPUT_XLSX_DIR, f"report_{now.strftime('%Y%m%d')}.xlsx")
+    wb.save(filename)
+    return filename
+
+
 def main():
     pass
 
