@@ -199,6 +199,31 @@ def graphql_request(session, graphql_url, headers, query, variables):
     raise Exception(f"GraphQL request failed after {MAX_RETRIES} attempts.")
 
 
+ADJ_BATCH_QUERY = """
+query getAdjustments($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    id
+    ... on InventoryItem {
+      inventoryAdjustmentGroups(last: 50) {
+        edges {
+          node {
+            createdAt
+            reason
+            staffMember { displayName }
+            app { title }
+            changes {
+              delta
+              quantityAfterChange
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
 # ─── DATA FETCHING ────────────────────────────────────────────────────────────
 
 def get_all_variants(base_url, session, headers):
@@ -280,6 +305,89 @@ def get_order_data(base_url, session, headers, now):
         f"{len(recently_sold_ids):,} (excluded from report)"
     )
     return recently_sold_ids, last_sold_map
+
+
+def get_last_adjustment_map(shop, session, headers, inventory_item_ids, now):
+    """
+    Batched GraphQL: most recent qualifying inventory adjustment per item.
+
+    Qualifying criteria (all three must be true):
+      1. reason == "correction"
+      2. staffMember or app is present
+      3. |sum(change.delta)| >= MIN_ADJUSTMENT_QUANTITY
+
+    Returns { inventory_item_id (int): { date, days, actor, delta, qty_before, qty_after } }
+    """
+    graphql_url = f"https://{shop}/admin/api/{API_VERSION}/graphql.json"
+    last_adj    = {}
+    total       = len(inventory_item_ids)
+
+    safe_print(
+        f"  Querying adjustment history "
+        f"({total:,} items, {GRAPHQL_BATCH_SIZE} per request)..."
+    )
+
+    for batch_start in range(0, total, GRAPHQL_BATCH_SIZE):
+        batch = inventory_item_ids[batch_start: batch_start + GRAPHQL_BATCH_SIZE]
+        gids  = [f"gid://shopify/InventoryItem/{iid}" for iid in batch]
+
+        data = graphql_request(session, graphql_url, headers, ADJ_BATCH_QUERY, {"ids": gids})
+
+        for node in data.get("data", {}).get("nodes", []):
+            if not node or "inventoryAdjustmentGroups" not in node:
+                continue
+
+            inv_item_id = int(node["id"].split("/")[-1])
+            best_dt     = None
+            best_record = None
+
+            for edge in node["inventoryAdjustmentGroups"].get("edges", []):
+                n = edge.get("node", {})
+
+                if n.get("reason") != "correction":
+                    continue
+                if not n.get("staffMember") and not n.get("app"):
+                    continue
+
+                changes   = n.get("changes", [])
+                delta     = sum(c.get("delta", 0) for c in changes)
+                qty_after = sum(c.get("quantityAfterChange", 0) for c in changes)
+
+                if abs(delta) < MIN_ADJUSTMENT_QUANTITY:
+                    continue
+
+                created_at_str = n.get("createdAt")
+                if not created_at_str:
+                    continue
+                dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+
+                if best_dt is None or dt > best_dt:
+                    best_dt = dt
+                    staff_node = n.get("staffMember") or {}
+                    app_node   = n.get("app") or {}
+                    actor = (
+                        staff_node.get("displayName")
+                        or app_node.get("title")
+                        or "Unknown"
+                    )
+                    best_record = {
+                        "date":      dt.strftime("%Y-%m-%d"),
+                        "days":      (now - dt).days,
+                        "actor":     actor,
+                        "delta":     delta,
+                        "qty_after": qty_after,
+                        "qty_before": qty_after - delta,
+                    }
+
+            if best_record:
+                last_adj[inv_item_id] = best_record
+
+        processed = min(batch_start + GRAPHQL_BATCH_SIZE, total)
+        if processed % (GRAPHQL_BATCH_SIZE * 10) == 0 or processed >= total:
+            safe_print(f"    Progress: {processed:,}/{total:,}")
+
+    safe_print(f"  Found adjustment records for {len(last_adj):,}/{total:,} items.")
+    return last_adj
 
 
 def main():

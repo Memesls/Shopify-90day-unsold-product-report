@@ -115,3 +115,71 @@ class TestGetOrderData:
         with patch.object(rpt, "paginate", return_value=orders):
             _, last_sold = rpt.get_order_data("https://store/admin/api/2025-01", MagicMock(), {}, now)
         assert (now - last_sold[5]).days == 100
+
+
+class TestGetLastAdjustmentMap:
+    def _now(self):
+        return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def _node(self, inv_id, edges):
+        return {
+            "id": f"gid://shopify/InventoryItem/{inv_id}",
+            "inventoryAdjustmentGroups": {"edges": edges},
+        }
+
+    def _edge(self, created_at, reason, staff=None, app=None, delta=10, qty_after=100):
+        return {"node": {
+            "createdAt": created_at,
+            "reason": reason,
+            "staffMember": {"displayName": staff} if staff else None,
+            "app": {"title": app} if app else None,
+            "changes": [{"delta": delta, "quantityAfterChange": qty_after}],
+        }}
+
+    def _fake_data(self, *nodes):
+        return {"data": {"nodes": list(nodes)}}
+
+    def test_qualifies_staff_correction(self):
+        node = self._node(42, [self._edge("2026-01-01T10:00:00Z", "correction", staff="John", delta=50, qty_after=200)])
+        with patch.object(rpt, "graphql_request", return_value=self._fake_data(node)):
+            result = rpt.get_last_adjustment_map("store.myshopify.com", MagicMock(), {}, [42], self._now())
+        adj = result[42]
+        assert adj["actor"] == "John"
+        assert adj["delta"] == 50
+        assert adj["qty_after"] == 200
+        assert adj["qty_before"] == 150
+
+    def test_qualifies_app_correction(self):
+        node = self._node(99, [self._edge("2026-01-01T10:00:00Z", "correction", app="Knockify-2.2", delta=20, qty_after=80)])
+        with patch.object(rpt, "graphql_request", return_value=self._fake_data(node)):
+            result = rpt.get_last_adjustment_map("store", MagicMock(), {}, [99], self._now())
+        assert result[99]["actor"] == "Knockify-2.2"
+
+    def test_excludes_wrong_reason(self):
+        node = self._node(1, [self._edge("2026-01-01T10:00:00Z", "restock", staff="Jane", delta=10)])
+        with patch.object(rpt, "graphql_request", return_value=self._fake_data(node)):
+            result = rpt.get_last_adjustment_map("store", MagicMock(), {}, [1], self._now())
+        assert 1 not in result
+
+    def test_excludes_no_actor(self):
+        node = self._node(2, [self._edge("2026-01-01T10:00:00Z", "correction", delta=10)])
+        with patch.object(rpt, "graphql_request", return_value=self._fake_data(node)):
+            result = rpt.get_last_adjustment_map("store", MagicMock(), {}, [2], self._now())
+        assert 2 not in result
+
+    def test_excludes_delta_below_threshold(self):
+        # delta=2, MIN_ADJUSTMENT_QUANTITY=5 — should not qualify
+        node = self._node(3, [self._edge("2026-01-01T10:00:00Z", "correction", staff="Ana", delta=2, qty_after=10)])
+        with patch.object(rpt, "graphql_request", return_value=self._fake_data(node)):
+            result = rpt.get_last_adjustment_map("store", MagicMock(), {}, [3], self._now())
+        assert 3 not in result
+
+    def test_picks_most_recent_qualifying_record(self):
+        node = self._node(5, [
+            self._edge("2025-06-01T10:00:00Z", "correction", staff="Old", delta=10, qty_after=100),
+            self._edge("2026-02-01T10:00:00Z", "correction", staff="New", delta=15, qty_after=200),
+        ])
+        with patch.object(rpt, "graphql_request", return_value=self._fake_data(node)):
+            result = rpt.get_last_adjustment_map("store", MagicMock(), {}, [5], self._now())
+        assert result[5]["actor"] == "New"
+        assert result[5]["delta"] == 15
