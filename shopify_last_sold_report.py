@@ -390,6 +390,57 @@ def get_last_adjustment_map(shop, session, headers, inventory_item_ids, now):
     return last_adj
 
 
+# ─── PHASE 1 ORCHESTRATOR ────────────────────────────────────────────────────
+
+def fetch_store_data(store, display_name, now):
+    """
+    Phase 1: fetch all data for one store.
+    Returns a structured dict, or None if products/orders fetch fails entirely.
+    If adjustment fetch fails, last_adj_map is None and columns 8-13 show 'No Record'.
+    """
+    shop     = store["shop"]
+    token    = store["token"]
+    base_url = f"https://{shop}/admin/api/{API_VERSION}"
+    headers  = {
+        "X-Shopify-Access-Token": token,
+        "Content-Type":           "application/json",
+    }
+    session = make_session()
+
+    safe_print(f"\n{'='*60}")
+    safe_print(f"  Store: {shop}  ({display_name})")
+    safe_print(f"{'='*60}")
+
+    try:
+        safe_print("  Fetching active products...")
+        variants = get_all_variants(base_url, session, headers)
+        safe_print(f"  Found {len(variants):,} active variants.")
+
+        recently_sold_ids, last_sold_map = get_order_data(base_url, session, headers, now)
+
+    except Exception as e:
+        safe_print(f"  ✗ Critical error for {display_name}: {e}")
+        return None
+
+    inventory_item_ids = [v["inventory_item_id"] for v in variants if v["inventory_item_id"]]
+
+    try:
+        last_adj_map = get_last_adjustment_map(shop, session, headers, inventory_item_ids, now)
+    except Exception as e:
+        safe_print(f"  ⚠ Adjustment history failed for {display_name}: {e}")
+        safe_print(f"    Columns 8–13 will show 'No Record' for this store.")
+        last_adj_map = None
+
+    return {
+        "name":              display_name,
+        "shop":              shop,
+        "variants":          variants,
+        "recently_sold_ids": recently_sold_ids,
+        "last_sold_map":     last_sold_map,
+        "last_adj_map":      last_adj_map,
+    }
+
+
 def main():
     pass
 

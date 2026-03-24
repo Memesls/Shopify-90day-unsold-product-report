@@ -183,3 +183,39 @@ class TestGetLastAdjustmentMap:
             result = rpt.get_last_adjustment_map("store", MagicMock(), {}, [5], self._now())
         assert result[5]["actor"] == "New"
         assert result[5]["delta"] == 15
+
+
+class TestFetchStoreData:
+    def _store(self):
+        return {"shop": "test.myshopify.com", "token": "tok", "name": "TEST"}
+
+    def _now(self):
+        return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_returns_structured_dict_on_success(self):
+        variants = [{"inventory_item_id": 1, "sku": "A"}]
+        adj_map  = {1: {"date": "2026-01-01", "days": 10, "actor": "John",
+                        "delta": 10, "qty_before": 90, "qty_after": 100}}
+        with patch.object(rpt, "make_session"), \
+             patch.object(rpt, "get_all_variants", return_value=variants), \
+             patch.object(rpt, "get_order_data", return_value=(set(), {})), \
+             patch.object(rpt, "get_last_adjustment_map", return_value=adj_map):
+            result = rpt.fetch_store_data(self._store(), "MYSTORE", self._now())
+        assert result["name"] == "MYSTORE"
+        assert result["variants"] == variants
+        assert result["last_adj_map"] == adj_map
+
+    def test_returns_none_when_product_fetch_fails(self):
+        with patch.object(rpt, "make_session"), \
+             patch.object(rpt, "get_all_variants", side_effect=Exception("API down")):
+            result = rpt.fetch_store_data(self._store(), "MYSTORE", self._now())
+        assert result is None
+
+    def test_sets_adj_map_to_none_when_graphql_fails(self):
+        with patch.object(rpt, "make_session"), \
+             patch.object(rpt, "get_all_variants", return_value=[{"inventory_item_id": 1}]), \
+             patch.object(rpt, "get_order_data", return_value=(set(), {})), \
+             patch.object(rpt, "get_last_adjustment_map", side_effect=Exception("GQL error")):
+            result = rpt.fetch_store_data(self._store(), "MYSTORE", self._now())
+        assert result is not None
+        assert result["last_adj_map"] is None
