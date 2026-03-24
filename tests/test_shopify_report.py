@@ -219,3 +219,30 @@ class TestFetchStoreData:
             result = rpt.fetch_store_data(self._store(), "MYSTORE", self._now())
         assert result is not None
         assert result["last_adj_map"] is None
+
+
+class TestBuildSharedSkuMap:
+    def _store(self, name, skus):
+        return {"name": name, "variants": [{"sku": s} for s in skus]}
+
+    def test_shared_sku_lists_both_stores(self):
+        result = rpt.build_shared_sku_map([
+            self._store("CBSD",  ["SKU-A", "SKU-B"]),
+            self._store("LOSAD", ["SKU-A", "SKU-C"]),
+        ])
+        assert set(result["SKU-A"]) == {"CBSD", "LOSAD"}
+
+    def test_unique_sku_has_single_store(self):
+        result = rpt.build_shared_sku_map([
+            self._store("CBSD",  ["SKU-A"]),
+            self._store("LOSAD", ["SKU-B"]),
+        ])
+        assert result["SKU-A"] == ["CBSD"]
+        assert result["SKU-B"] == ["LOSAD"]
+
+    def test_blank_sku_excluded(self):
+        result = rpt.build_shared_sku_map([
+            self._store("CBSD",  [""]),
+            self._store("LOSAD", [""]),
+        ])
+        assert "" not in result

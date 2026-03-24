@@ -441,6 +441,23 @@ def fetch_store_data(store, display_name, now):
     }
 
 
+# ─── PHASE 2 ─────────────────────────────────────────────────────────────────
+
+def build_shared_sku_map(all_store_data):
+    """
+    Cross-reference active SKUs across all successfully-fetched stores.
+    Returns { sku: [store_names] } — only non-blank SKUs included.
+    """
+    sku_map = defaultdict(list)
+    for store_data in all_store_data:
+        name = store_data["name"]
+        for v in store_data["variants"]:
+            sku = v.get("sku", "")
+            if sku:
+                sku_map[sku].append(name)
+    return dict(sku_map)
+
+
 def main():
     pass
 
