@@ -59,3 +59,29 @@ class TestGraphqlRequest:
         with patch.object(rpt, "api_request", return_value=response):
             with pytest.raises(Exception, match="GraphQL errors"):
                 rpt.graphql_request(MagicMock(), "https://x/graphql.json", {}, "query {}", {})
+
+
+class TestGetAllVariants:
+    def test_returns_flat_variant_list_with_product_context(self):
+        products = [{
+            "id": 1, "title": "Shirt", "vendor": "Nike",
+            "created_at": "2024-01-15T10:00:00Z",
+            "variants": [
+                {"id": 10, "title": "Blue / S", "sku": "SHIRT-B-S",
+                 "inventory_item_id": 100, "inventory_quantity": 5},
+            ],
+        }]
+        with patch.object(rpt, "paginate", return_value=products):
+            result = rpt.get_all_variants("https://store/admin/api/2025-01", MagicMock(), {})
+        assert len(result) == 1
+        v = result[0]
+        assert v["product_title"] == "Shirt"
+        assert v["sku"] == "SHIRT-B-S"
+        assert v["vendor"] == "Nike"
+        assert v["inventory_quantity"] == 5
+        assert isinstance(v["product_created_at"], datetime)
+
+    def test_passes_status_active_param(self):
+        with patch.object(rpt, "paginate", return_value=[]) as mock_pag:
+            rpt.get_all_variants("https://store/admin/api/2025-01", MagicMock(), {})
+        assert mock_pag.call_args[1]["params"]["status"] == "active"

@@ -199,6 +199,43 @@ def graphql_request(session, graphql_url, headers, query, variables):
     raise Exception(f"GraphQL request failed after {MAX_RETRIES} attempts.")
 
 
+# ─── DATA FETCHING ────────────────────────────────────────────────────────────
+
+def get_all_variants(base_url, session, headers):
+    """Return every active variant with its product context."""
+    products = paginate(
+        f"{base_url}/products.json",
+        "products",
+        session,
+        headers,
+        params={
+            "status": "active",
+            "limit":  250,
+            "fields": "id,title,vendor,created_at,variants",
+        },
+    )
+    variants = []
+    for product in products:
+        created_at_str = product.get("created_at", "")
+        created_at = (
+            datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            if created_at_str else None
+        )
+        for v in product.get("variants", []):
+            variants.append({
+                "product_id":         product["id"],
+                "product_title":      product["title"],
+                "vendor":             product.get("vendor", ""),
+                "product_created_at": created_at,
+                "variant_id":         v["id"],
+                "variant_title":      v.get("title", ""),
+                "sku":                v.get("sku", ""),
+                "inventory_item_id":  v.get("inventory_item_id"),
+                "inventory_quantity": v.get("inventory_quantity", 0),
+            })
+    return variants
+
+
 def main():
     pass
 
