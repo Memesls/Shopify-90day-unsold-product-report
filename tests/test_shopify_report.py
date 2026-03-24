@@ -31,3 +31,31 @@ class TestAssignStoreNames:
         # "X_2" is already an explicit store name — third "X" must become "X_3"
         stores = [{"name": "X"}, {"name": "X_2"}, {"name": "X"}]
         assert rpt.assign_store_names(stores) == {0: "X", 1: "X_2", 2: "X_3"}
+
+
+class TestGraphqlRequest:
+    def test_returns_data_on_success(self):
+        response = MagicMock()
+        response.json.return_value = {"data": {"nodes": []}}
+        with patch.object(rpt, "api_request", return_value=response):
+            result = rpt.graphql_request(MagicMock(), "https://x/graphql.json", {}, "query {}", {})
+        assert result == {"data": {"nodes": []}}
+
+    def test_retries_on_throttled_then_succeeds(self):
+        throttled = MagicMock()
+        throttled.json.return_value = {
+            "errors": [{"extensions": {"code": "THROTTLED"}}]
+        }
+        success = MagicMock()
+        success.json.return_value = {"data": {}}
+        with patch.object(rpt, "api_request", side_effect=[throttled, success]):
+            with patch("time.sleep"):
+                result = rpt.graphql_request(MagicMock(), "https://x/graphql.json", {}, "query {}", {})
+        assert result == {"data": {}}
+
+    def test_raises_on_non_throttle_error(self):
+        response = MagicMock()
+        response.json.return_value = {"errors": [{"message": "Not found"}]}
+        with patch.object(rpt, "api_request", return_value=response):
+            with pytest.raises(Exception, match="GraphQL errors"):
+                rpt.graphql_request(MagicMock(), "https://x/graphql.json", {}, "query {}", {})

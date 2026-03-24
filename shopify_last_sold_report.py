@@ -160,6 +160,45 @@ def paginate(url, key, session, headers, params=None):
     return results
 
 
+def graphql_request(session, graphql_url, headers, query, variables):
+    """
+    GraphQL POST with retry on THROTTLED errors and proactive cost-bucket throttling.
+    """
+    for attempt in range(MAX_RETRIES):
+        response = api_request(
+            session, "POST", graphql_url, headers,
+            json={"query": query, "variables": variables},
+        )
+        data = response.json()
+
+        if "errors" in data:
+            throttled = any(
+                e.get("extensions", {}).get("code") == "THROTTLED"
+                for e in data["errors"]
+            )
+            if throttled and attempt < MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                safe_print(f"    [GraphQL throttled] Waiting {wait}s...")
+                time.sleep(wait)
+                continue
+            raise Exception(f"GraphQL errors: {data['errors']}")
+
+        throttle = (
+            data.get("extensions", {})
+                .get("cost", {})
+                .get("throttleStatus", {})
+        )
+        available    = throttle.get("currentlyAvailable", 1000)
+        restore_rate = throttle.get("restoreRate", 50)
+        if available < 200:
+            wait = (200 - available) / restore_rate if restore_rate > 0 else 2
+            time.sleep(wait)
+
+        return data
+
+    raise Exception(f"GraphQL request failed after {MAX_RETRIES} attempts.")
+
+
 def main():
     pass
 
