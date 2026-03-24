@@ -598,8 +598,75 @@ def write_csv(rows, store_name, now):
     return filename
 
 
+# ─── ENTRY POINT ─────────────────────────────────────────────────────────────
+
 def main():
-    pass
+    now = datetime.now(timezone.utc)
+
+    print("\n╔══════════════════════════════════════════════════╗")
+    print("║  Shopify Last Sold Report Generator v3           ║")
+    print("╚══════════════════════════════════════════════════╝")
+    print(f"  Threshold:               {THRESHOLD_DAYS} days")
+    print(f"  Order lookback:          {LAST_SOLD_LOOKBACK_DAYS} days")
+    print(f"  Min adjustment quantity: {MIN_ADJUSTMENT_QUANTITY} units")
+    print(f"  GraphQL batch:           {GRAPHQL_BATCH_SIZE} items/request")
+    print(f"  Stores:                  {len(STORES)}")
+    print(f"  Parallel workers:        {min(STORE_WORKERS, len(STORES))}")
+
+    store_names = assign_store_names(STORES)
+
+    # ── Phase 1: parallel fetch ───────────────────────────────────────────────
+    all_store_data = []
+    errors         = []
+    workers        = min(STORE_WORKERS, len(STORES))
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(fetch_store_data, store, store_names[i], now): (i, store)
+            for i, store in enumerate(STORES)
+        }
+        for future in as_completed(futures):
+            i, store = futures[future]
+            try:
+                data = future.result()
+                if data is not None:
+                    all_store_data.append(data)
+            except Exception as e:
+                errors.append((store_names[i], str(e)))
+                safe_print(f"\n  ✗ Unhandled error for {store_names[i]}: {e}")
+
+    if not all_store_data:
+        print("\n  No store data fetched. Exiting.")
+        return
+
+    # ── Phase 2: cross-reference + output ────────────────────────────────────
+    shared_sku_map = build_shared_sku_map(all_store_data)
+
+    all_store_rows = {}
+    generated_csvs = []
+
+    for store_data in all_store_data:
+        name = store_data["name"]
+        rows = build_report_rows(store_data, shared_sku_map, now)
+        all_store_rows[name] = rows
+        csv_path = write_csv(rows, name, now)
+        generated_csvs.append(csv_path)
+        safe_print(f"\n  ✓ CSV saved: {csv_path}  ({len(rows):,} rows)")
+
+    xlsx_path = write_xlsx(all_store_rows, now)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"  Done. {len(all_store_data)} store(s) processed.")
+    print(f"\n  Excel report:  {xlsx_path}")
+    print(f"  CSV files:")
+    for path in generated_csvs:
+        print(f"    {path}")
+    if errors:
+        print(f"\n  {len(errors)} store(s) failed:")
+        for name, err in errors:
+            print(f"    {name}: {err}")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
