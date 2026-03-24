@@ -483,7 +483,7 @@ def build_report_rows(store_data, shared_sku_map, now):
             days_since_sale = (now - last_sold_dt).days
         else:
             last_sold_str   = "Never Sold"
-            created_at      = v.get("product_created_at") or now
+            created_at      = v.get("product_created_at") or datetime(1970, 1, 1, tzinfo=timezone.utc)
             days_since_sale = (now - created_at).days
 
         # ── Inventory adjustment ──────────────────────────────────────────────
