@@ -584,6 +584,20 @@ def write_xlsx(all_store_rows, now):
     return filename
 
 
+def write_csv(rows, store_name, now):
+    """Write one CSV file for a store (UTF-8 BOM for Excel compatibility). Returns file path."""
+    os.makedirs(OUTPUT_CSV_DIR, exist_ok=True)
+    filename = os.path.join(
+        OUTPUT_CSV_DIR,
+        f"report_{store_name}_{now.strftime('%Y%m%d')}.csv",
+    )
+    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    return filename
+
+
 def main():
     pass
 

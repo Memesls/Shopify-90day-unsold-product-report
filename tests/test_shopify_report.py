@@ -400,3 +400,25 @@ class TestWriteXlsx:
         with patch.object(rpt, "OUTPUT_XLSX_DIR", str(tmp_path)):
             path = rpt.write_xlsx({}, self._now())
         assert path is None
+
+
+class TestWriteCsv:
+    def _now(self):
+        return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_creates_csv_with_correct_columns_and_data(self, tmp_path):
+        row = {fn: f"val_{fn}" for fn in rpt.FIELDNAMES}
+        with patch.object(rpt, "OUTPUT_CSV_DIR", str(tmp_path)):
+            path = rpt.write_csv([row], "CBSD", self._now())
+        assert os.path.exists(path)
+        with open(path, encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        assert list(rows[0].keys()) == rpt.FIELDNAMES
+        assert rows[0]["SKU"] == "val_SKU"
+
+    def test_filename_includes_store_name_and_date(self, tmp_path):
+        with patch.object(rpt, "OUTPUT_CSV_DIR", str(tmp_path)):
+            path = rpt.write_csv([], "CBSD", self._now())
+        assert "CBSD" in os.path.basename(path)
+        assert "20260324" in os.path.basename(path)
