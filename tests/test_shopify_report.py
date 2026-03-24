@@ -85,3 +85,33 @@ class TestGetAllVariants:
         with patch.object(rpt, "paginate", return_value=[]) as mock_pag:
             rpt.get_all_variants("https://store/admin/api/2025-01", MagicMock(), {})
         assert mock_pag.call_args[1]["params"]["status"] == "active"
+
+
+class TestGetOrderData:
+    def _now(self):
+        return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_recently_sold_ids_excludes_orders_over_threshold(self):
+        now = self._now()
+        old    = (now - timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        recent = (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        orders = [
+            {"created_at": old,    "line_items": [{"variant_id": 1}]},
+            {"created_at": recent, "line_items": [{"variant_id": 2}]},
+        ]
+        with patch.object(rpt, "paginate", return_value=orders):
+            recently_sold, _ = rpt.get_order_data("https://store/admin/api/2025-01", MagicMock(), {}, now)
+        assert 2 in recently_sold
+        assert 1 not in recently_sold
+
+    def test_last_sold_map_keeps_most_recent_order_date(self):
+        now = self._now()
+        date1 = (now - timedelta(days=200)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        date2 = (now - timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        orders = [
+            {"created_at": date1, "line_items": [{"variant_id": 5}]},
+            {"created_at": date2, "line_items": [{"variant_id": 5}]},
+        ]
+        with patch.object(rpt, "paginate", return_value=orders):
+            _, last_sold = rpt.get_order_data("https://store/admin/api/2025-01", MagicMock(), {}, now)
+        assert (now - last_sold[5]).days == 100

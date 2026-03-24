@@ -236,6 +236,52 @@ def get_all_variants(base_url, session, headers):
     return variants
 
 
+def get_order_data(base_url, session, headers, now):
+    """
+    Scan order history (LAST_SOLD_LOOKBACK_DAYS) and return:
+      recently_sold_ids — variant IDs sold within THRESHOLD_DAYS (excluded from report)
+      last_sold_map     — { variant_id: most_recent_sale_datetime }
+    """
+    cutoff         = now - timedelta(days=THRESHOLD_DAYS)
+    lookback_start = now - timedelta(days=LAST_SOLD_LOOKBACK_DAYS)
+
+    safe_print(f"  Scanning orders (last {LAST_SOLD_LOOKBACK_DAYS} days)...")
+
+    orders = paginate(
+        f"{base_url}/orders.json",
+        "orders",
+        session,
+        headers,
+        params={
+            "status":         "any",
+            "limit":          250,
+            "created_at_min": lookback_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fields":         "id,created_at,line_items",
+        },
+    )
+    safe_print(f"  Processed {len(orders):,} orders.")
+
+    last_sold_map = {}
+    for order in orders:
+        order_date_str = order.get("created_at")
+        if not order_date_str:
+            continue
+        order_date = datetime.fromisoformat(order_date_str.replace("Z", "+00:00"))
+        for item in order.get("line_items", []):
+            vid = item.get("variant_id")
+            if vid and (vid not in last_sold_map or order_date > last_sold_map[vid]):
+                last_sold_map[vid] = order_date
+
+    recently_sold_ids = {
+        vid for vid, dt in last_sold_map.items() if dt >= cutoff
+    }
+    safe_print(
+        f"  Variants sold in last {THRESHOLD_DAYS} days: "
+        f"{len(recently_sold_ids):,} (excluded from report)"
+    )
+    return recently_sold_ids, last_sold_map
+
+
 def main():
     pass
 
