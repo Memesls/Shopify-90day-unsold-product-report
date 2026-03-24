@@ -93,6 +93,73 @@ def assign_store_names(stores):
     return assigned
 
 
+# ─── HTTP UTILITIES ───────────────────────────────────────────────────────────
+
+_print_lock = threading.Lock()
+
+
+def safe_print(*args, **kwargs):
+    """Thread-safe print so parallel store output does not interleave."""
+    with _print_lock:
+        print(*args, **kwargs)
+
+
+def make_session():
+    """Create a requests.Session with connection pooling."""
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=10)
+    session.mount("https://", adapter)
+    return session
+
+
+def api_request(session, method, url, headers, retries=MAX_RETRIES, **kwargs):
+    """
+    HTTP request with automatic retry on:
+      - 429 (rate limit)   — honours Retry-After header
+      - 5xx (server error) — exponential backoff
+      - ConnectionError    — transient network issue
+    """
+    for attempt in range(retries):
+        try:
+            response = session.request(method, url, headers=headers, **kwargs)
+        except requests.exceptions.ConnectionError:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise
+
+        if response.status_code == 429:
+            wait = float(response.headers.get("Retry-After", 2 ** attempt))
+            safe_print(f"    [Rate limited] Waiting {wait:.1f}s...")
+            time.sleep(wait)
+            continue
+
+        if response.status_code >= 500 and attempt < retries - 1:
+            time.sleep(2 ** attempt)
+            continue
+
+        response.raise_for_status()
+        return response
+
+    raise Exception(f"Request failed after {retries} attempts: {url}")
+
+
+def paginate(url, key, session, headers, params=None):
+    """Fetch all pages from a Shopify REST endpoint via Link headers."""
+    results = []
+    while url:
+        response = api_request(session, "GET", url, headers, params=params)
+        results.extend(response.json().get(key, []))
+        link = response.headers.get("Link", "")
+        url = None
+        if 'rel="next"' in link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split(";")[0].strip().strip("<>")
+                    params = None
+    return results
+
+
 def main():
     pass
 
