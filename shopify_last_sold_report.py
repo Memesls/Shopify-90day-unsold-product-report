@@ -603,6 +603,9 @@ def write_csv(rows, store_name, now):
 def main():
     now = datetime.now(timezone.utc)
 
+    workers     = min(STORE_WORKERS, len(STORES))
+    store_names = assign_store_names(STORES)
+
     print("\n╔══════════════════════════════════════════════════╗")
     print("║  Shopify Last Sold Report Generator v3           ║")
     print("╚══════════════════════════════════════════════════╝")
@@ -611,14 +614,11 @@ def main():
     print(f"  Min adjustment quantity: {MIN_ADJUSTMENT_QUANTITY} units")
     print(f"  GraphQL batch:           {GRAPHQL_BATCH_SIZE} items/request")
     print(f"  Stores:                  {len(STORES)}")
-    print(f"  Parallel workers:        {min(STORE_WORKERS, len(STORES))}")
-
-    store_names = assign_store_names(STORES)
+    print(f"  Parallel workers:        {workers}")
 
     # ── Phase 1: parallel fetch ───────────────────────────────────────────────
     all_store_data = []
     errors         = []
-    workers        = min(STORE_WORKERS, len(STORES))
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
