@@ -246,3 +246,107 @@ class TestBuildSharedSkuMap:
             self._store("LOSAD", [""]),
         ])
         assert "" not in result
+
+
+class TestBuildReportRows:
+    def _now(self):
+        return datetime(2026, 3, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def _variant(self, **kw):
+        base = {
+            "variant_id": 1, "product_title": "T-Shirt",
+            "product_created_at": datetime(2023, 1, 1, tzinfo=timezone.utc),
+            "variant_title": "Blue / M", "sku": "TS-B-M",
+            "vendor": "Nike", "inventory_quantity": 10, "inventory_item_id": 100,
+        }
+        base.update(kw)
+        return base
+
+    def _store(self, variants, recently_sold=None, last_sold=None, adj_map=None, name="CBSD"):
+        return {
+            "name": name, "variants": variants,
+            "recently_sold_ids": recently_sold or set(),
+            "last_sold_map": last_sold or {},
+            "last_adj_map": adj_map,
+        }
+
+    def test_excludes_zero_inventory(self):
+        rows = rpt.build_report_rows(self._store([self._variant(inventory_quantity=0)]), {}, self._now())
+        assert len(rows) == 0
+
+    def test_excludes_recently_sold(self):
+        v = self._variant()
+        rows = rpt.build_report_rows(self._store([v], recently_sold={v["variant_id"]}), {}, self._now())
+        assert len(rows) == 0
+
+    def test_includes_unsold_with_stock(self):
+        rows = rpt.build_report_rows(self._store([self._variant()]), {}, self._now())
+        assert len(rows) == 1
+
+    def test_days_since_sale_uses_last_sold_date(self):
+        now = self._now()
+        v = self._variant()
+        last_sold = now - timedelta(days=120)
+        rows = rpt.build_report_rows(self._store([v], last_sold={v["variant_id"]: last_sold}), {}, now)
+        assert rows[0]["Days Since Last Sale"] == 120
+        assert rows[0]["Last Sold Date"] == last_sold.strftime("%Y-%m-%d")
+
+    def test_never_sold_falls_back_to_product_created_at(self):
+        now = self._now()
+        created = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        v = self._variant(product_created_at=created)
+        rows = rpt.build_report_rows(self._store([v]), {}, now)
+        assert rows[0]["Last Sold Date"] == "Never Sold"
+        assert rows[0]["Days Since Last Sale"] == (now - created).days
+
+    def test_adjustment_columns_populated_from_adj_map(self):
+        v = self._variant()
+        adj = {"date": "2026-01-01", "days": 83, "actor": "John",
+               "delta": 50, "qty_before": 150, "qty_after": 200}
+        rows = rpt.build_report_rows(self._store([v], adj_map={v["inventory_item_id"]: adj}), {}, self._now())
+        r = rows[0]
+        assert r["Last Inventory Adjustment"] == "2026-01-01"
+        assert r["Days Since Last Adjustment"] == 83
+        assert r["Adjusted By"] == "John"
+        assert r["Previous Inventory"] == 150
+        assert r["Adjustment Quantity"] == 50
+        assert r["New Inventory"] == 200
+
+    def test_no_adjustment_record_shows_no_record(self):
+        rows = rpt.build_report_rows(self._store([self._variant()], adj_map={}), {}, self._now())
+        r = rows[0]
+        assert r["Last Inventory Adjustment"] == "No Record"
+        assert r["Days Since Last Adjustment"] == "No Record"
+        assert r["Adjusted By"] == "No Record"
+        assert r["Previous Inventory"] == "No Record"
+        assert r["Adjustment Quantity"] == "No Record"
+        assert r["New Inventory"] == "No Record"
+
+    def test_adj_map_none_also_shows_no_record(self):
+        rows = rpt.build_report_rows(self._store([self._variant()], adj_map=None), {}, self._now())
+        assert rows[0]["Adjusted By"] == "No Record"
+
+    def test_shared_inventory_lists_other_stores(self):
+        v = self._variant(sku="SHARED")
+        rows = rpt.build_report_rows(
+            self._store([v], name="CBSD"),
+            {"SHARED": ["CBSD", "LOSAD"]},
+            self._now()
+        )
+        assert rows[0]["Shared Inventory"] == "Shared with: LOSAD"
+
+    def test_unique_sku_shows_dash(self):
+        v = self._variant(sku="UNIQUE")
+        rows = rpt.build_report_rows(
+            self._store([v], name="CBSD"),
+            {"UNIQUE": ["CBSD"]},
+            self._now()
+        )
+        assert rows[0]["Shared Inventory"] == "—"
+
+    def test_sorted_descending_by_days_since_sale(self):
+        now = self._now()
+        v1 = self._variant(variant_id=1, product_created_at=now - timedelta(days=200))
+        v2 = self._variant(variant_id=2, product_created_at=now - timedelta(days=100))
+        rows = rpt.build_report_rows(self._store([v1, v2]), {}, now)
+        assert rows[0]["Days Since Last Sale"] > rows[1]["Days Since Last Sale"]

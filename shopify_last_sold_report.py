@@ -458,6 +458,81 @@ def build_shared_sku_map(all_store_data):
     return dict(sku_map)
 
 
+def build_report_rows(store_data, shared_sku_map, now):
+    """
+    Apply filters and build report rows for one store.
+    Returns list of dicts keyed by FIELDNAMES, sorted descending by Days Since Last Sale.
+    """
+    store_name        = store_data["name"]
+    recently_sold_ids = store_data["recently_sold_ids"]
+    last_sold_map     = store_data["last_sold_map"]
+    last_adj_map      = store_data["last_adj_map"]  # may be None
+
+    rows = []
+    for v in store_data["variants"]:
+        if v["inventory_quantity"] <= 0:
+            continue
+        if v["variant_id"] in recently_sold_ids:
+            continue
+
+        # ── Last sold ─────────────────────────────────────────────────────────
+        vid = v["variant_id"]
+        if vid in last_sold_map:
+            last_sold_dt    = last_sold_map[vid]
+            last_sold_str   = last_sold_dt.strftime("%Y-%m-%d")
+            days_since_sale = (now - last_sold_dt).days
+        else:
+            last_sold_str   = "Never Sold"
+            created_at      = v.get("product_created_at") or now
+            days_since_sale = (now - created_at).days
+
+        # ── Inventory adjustment ──────────────────────────────────────────────
+        inv_id = v.get("inventory_item_id")
+        adj    = (last_adj_map or {}).get(inv_id) if inv_id else None
+
+        if adj:
+            last_adj_date  = adj["date"]
+            days_since_adj = adj["days"]
+            adjusted_by    = adj["actor"]
+            prev_inv       = adj["qty_before"]
+            adj_qty        = adj["delta"]
+            new_inv        = adj["qty_after"]
+        else:
+            last_adj_date  = "No Record"
+            days_since_adj = "No Record"
+            adjusted_by    = "No Record"
+            prev_inv       = "No Record"
+            adj_qty        = "No Record"
+            new_inv        = "No Record"
+
+        # ── Shared inventory ──────────────────────────────────────────────────
+        sku = v.get("sku", "")
+        other_stores = [
+            n for n in shared_sku_map.get(sku, []) if n != store_name
+        ] if sku else []
+        shared_str = f"Shared with: {', '.join(other_stores)}" if other_stores else "—"
+
+        rows.append({
+            "Product Title":              v["product_title"],
+            "Product Variant":            v["variant_title"],
+            "SKU":                        sku,
+            "Vendor":                     v["vendor"],
+            "Available Inventory":        v["inventory_quantity"],
+            "Last Sold Date":             last_sold_str,
+            "Days Since Last Sale":       days_since_sale,
+            "Last Inventory Adjustment":  last_adj_date,
+            "Days Since Last Adjustment": days_since_adj,
+            "Adjusted By":                adjusted_by,
+            "Previous Inventory":         prev_inv,
+            "Adjustment Quantity":        adj_qty,
+            "New Inventory":              new_inv,
+            "Shared Inventory":           shared_str,
+        })
+
+    rows.sort(key=lambda r: r["Days Since Last Sale"], reverse=True)
+    return rows
+
+
 def main():
     pass
 
