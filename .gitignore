@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Output files (generated at runtime)
+*.xlsx
+CSV files/*.csv
+
+# Environment
+.env
+*.env
